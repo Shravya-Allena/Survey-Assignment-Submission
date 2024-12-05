@@ -1,0 +1,369 @@
+---
+title: "Do Dental Checkups Lower the Odds?"
+author: "Shravya"
+date: "2024-12-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+# Load required libraries
+library(dplyr)   #for data manipulation and transformation
+library(car)     # for regression models 
+library(ggplot2) # for creating data visualizations
+library(table1)  # for generating descriptive tables
+```
+
+```{r}
+# Import the dataset
+data <- read.csv("C:/Users/HP/Desktop/ADA/munni.csv")
+# Check the total number of rows in the original raw dataset
+total_raw_observations <- nrow(data)
+print(paste("Total observations in raw dataset:", total_raw_observations))  
+# Select only the variables of interest.
+data <- data %>% 
+  select(DIBEV_A, DENPREV_A, AGEP_A, SEX_A, RACEALLP_A, EDUCP_A)
+```
+
+```{r}
+
+# SUMMARIZE MISSING DATA BEFORE FILTERING
+#This step will provide me with an outline of missing values in each of my variable.
+
+
+missing_summary <- data.frame(
+  Variable = c("DIBEV_A", "DENPREV_A", "AGEP_A", "SEX_A", "RACEALLP_A", "EDUCP_A"),
+  Missing_Count = sapply(c("DIBEV_A", "DENPREV_A", "AGEP_A", "SEX_A", "RACEALLP_A", "EDUCP_A"), 
+                         function(var) sum(is.na(data[[var]]))),
+  Total = nrow(data)
+)
+
+# using the below code, i will be able to calculate % of missing observations for each variable.
+
+missing_summary$Missing_Percent <- (missing_summary$Missing_Count / missing_summary$Total) * 100
+
+# Print the summary
+print(missing_summary)
+```
+
+```{r}
+
+# DATA CLEANING AND PREPARATION
+# Here, I will filter and prepare my dataset for analysis while i double check it has all valid observations.
+
+# Count excluded observations for each variable before filtering
+# 1. AGE
+excluded_age <- sum(data$AGEP_A < 18 | data$AGEP_A > 84, na.rm = TRUE)
+print(paste("Excluded due to age:", excluded_age))
+
+# 2. DENPREV_A
+excluded_DENPREV <- sum(data$DENPREV_A %in% c(7, 8, 9), na.rm = TRUE)
+print(paste("Excluded due to DENPREV_A invalid responses:", excluded_DENPREV))
+
+# 3. DIBEV_A
+excluded_DIBEV <- sum(data$DIBEV_A %in% c(7, 8, 9), na.rm = TRUE)
+print(paste("Excluded due to DIBEV_A invalid responses:", excluded_DIBEV))
+
+# 4. RACEALLP_A
+excluded_RACEALLP <- sum(data$RACEALLP_A %in% c(7, 8, 9), na.rm = TRUE)
+print(paste("Excluded due to RACEALLP_A invalid responses:", excluded_RACEALLP))
+
+# 5. SEX_A
+excluded_SEX <- sum(data$SEX_A %in% c(7, 8, 9), na.rm = TRUE)
+print(paste("Excluded due to SEX_A invalid responses:", excluded_SEX))
+
+# 6. EDUCP_A
+excluded_EDUCP <- sum(data$EDUCP_A %in% c(97, 98, 99), na.rm = TRUE)
+print(paste("Excluded due to invalid EDUCP_A values (Refused, Not Ascertained, Don't Know):", excluded_EDUCP))
+
+# I will filter data to remove invalid or unnecessary levels
+cleaned_data <- data %>%
+  filter(
+    # Valid levels for each variable:
+    # AGEP_A: Age between 18-84 years
+    AGEP_A >= 18 & AGEP_A <= 84,
+   
+    # DENPREV_A: Exclude "Refused", "Not Ascertained", "Don't Know" (codes 7, 8, 9)
+    !DENPREV_A %in% c(7, 8, 9),
+  
+    # DIBEV_A: Exclude "Refused", "Not Ascertained", "Don't Know" (codes 7, 8, 9)
+    !DIBEV_A %in% c(7, 8, 9),
+   
+    # RACEALLP_A: Exclude "Refused", "Not Ascertained", "Don't Know" (codes 7, 8, 9)
+    !RACEALLP_A %in% c(7, 8, 9),
+    
+    # SEX_A: Exclude "Refused", "Not Ascertained", "Don't Know" (codes 7, 8, 9)
+    !SEX_A %in% c(7, 8, 9),
+    
+    # EDUCP_A: Exclude "Refused", "Not Ascertained", "Don't Know" (codes 97, 98, 99)
+    !EDUCP_A %in% c(97, 98, 99),
+
+  ) 
+
+
+# Recoding my main predictor variable DENPREV_A with additional level for "Within the past 2 years"
+cleaned_data <- cleaned_data %>%
+  mutate(
+    DENPREV_A = case_when(
+      DENPREV_A == 0 ~ "Never",
+      DENPREV_A == 1 ~ "Within Past 1 Year",
+      DENPREV_A == 2 ~ "Within Past 2 Years",
+      TRUE ~ NA_character_  # Handle other cases if present
+    )
+  ) %>%
+  # Convert recoded variable to a factor
+  mutate(
+    DENPREV_A = factor(
+      DENPREV_A,
+      levels = c("Never", "Within Past 1 Year", "Within Past 2 Years")
+    )
+  )
+
+# Recode educational levels 
+cleaned_data <- cleaned_data %>%
+  mutate(
+    EDUCP_A = case_when(
+      EDUCP_A %in% c(1, 2, 3) ~ "Below High School",
+      EDUCP_A == 4 ~ "High School",
+      EDUCP_A %in% c(5, 6, 7) ~ "Some College/Associate Degree",
+      EDUCP_A %in% c(8, 9, 10) ~ "College Graduate or Higher"
+    )
+  ) %>%
+  # Convert the newly recoded variable to a factor with appropriate order
+  mutate(
+    EDUCP_A = factor(
+      EDUCP_A,
+      levels = c("Below High School", "High School", "Some College/Associate Degree", "College Graduate or Higher")
+    )
+  )
+cleaned_data$DIBEV_A <-ifelse(cleaned_data$DIBEV_A ==2,1,0)
+# Convert other variables to factors with appropriate labels
+cleaned_data <- cleaned_data %>%
+  mutate(
+    # Dependent variable: Diabetes (DIBEV_A)
+    DIBEV_A = factor(DIBEV_A, levels = c(0, 1), labels = c("No", "Yes")),
+    
+    # Sex (SEX_A)
+    SEX_A = factor(SEX_A, levels = c(1, 2), labels = c("Male", "Female")),
+    
+    # Race (RACEALLP_A)
+    RACEALLP_A = factor(RACEALLP_A, levels = c(1, 2, 3, 4, 5, 6), 
+                        labels = c("White only", "Black/African American", 
+                                   "Asian only", "AIAN only", 
+                                   "AIAN and Other", "Other races"))
+  )
+
+# Remove rows with missing values in all variables of interest
+cleaned_data <- cleaned_data %>%
+  filter(
+    !is.na(DIBEV_A),
+    !is.na(DENPREV_A),
+    !is.na(AGEP_A),
+    !is.na(SEX_A),
+    !is.na(RACEALLP_A),
+    !is.na(EDUCP_A)
+  )
+
+# Check for missing values after filtering
+variables_of_interest <- c("DIBEV_A", "DENPREV_A", "AGEP_A", "SEX_A", "RACEALLP_A", "EDUCP_A")
+
+for (var in variables_of_interest) {
+  missing_count <- sum(is.na(cleaned_data[[var]]))
+  print(paste("Missing values in", var, "after filtering:", missing_count))
+}
+
+# Let us Count final cleaned observations
+final_cleaned_observations <- nrow(cleaned_data)
+print(paste("Final analytic dataset observations:", final_cleaned_observations))
+```
+
+```{r}
+
+#Creating descriptives table as table1
+
+
+# Define labels for variables for better presentation
+label(cleaned_data$DENPREV_A) <- "Dental Visit History"
+label(cleaned_data$AGEP_A) <- "Age"
+label(cleaned_data$SEX_A) <- "Sex"
+label(cleaned_data$RACEALLP_A) <- "Race/Ethnicity"
+label(cleaned_data$EDUCP_A) <- "Education Level"
+
+# Create Table 1 : This table will summarize key demographic characteristics as descriptive statistics for variables by diabetes status.
+table1(~ AGEP_A + SEX_A + RACEALLP_A + EDUCP_A + DENPREV_A | DIBEV_A, data = cleaned_data)
+
+```
+Intrepretation: 
+
+The overall mean age of the study population is 52 years. Median statistics are interesting because individuals with diabetes are younger with average age of 51 years compared to those without diabetes
+For Sex, A higher proportion of women (56.1%) than men are included in the study population.
+For Race, The majority of study population identified are white and thereis a higher proportion of white participants with diabetes (78.8%)
+For Education, A higher percent of participants with diabetes have a college degree or a equivalent higher educational level at  46.1%
+For dental visit history, We find that there is not much difference. However a majority of participants have had a dental visit in the past year (83.7%)
+
+
+```{r}
+
+#  I will now move forward to do Model Assumption testing
+
+
+# Check multicollinearity using Variance Inflation Factor (VIF) to assess for multicollinearity among predictor variables in the model.
+model_vif <- glm(DIBEV_A ~ AGEP_A + SEX_A + RACEALLP_A + EDUCP_A + DENPREV_A,family = "binomial", 
+                data = cleaned_data)
+vif_values <- vif(model_vif)
+print(vif_values)
+
+```
+Interpretation: 
+
+Based on the output, we infer that all VIF values for my predictor variables are close to 1, indicating no multi collinearity among them.So we can retain them in the analysis.We do not want multicollinearity to exist because it can inflate standard errors therefore making it difficult to estimate our regression coefficients accurately.
+
+```{r}
+# Determining the linearity assumption of my continuous variable AGEP_A
+# I will use Box-Tidwell test to assess if the relationship between the logit of the outcome variable (DIBEV_A) and my continuous variable is linear.
+
+# Creating the log-transformed interaction term
+cleaned_data$log_AGEP_A <- log(cleaned_data$AGEP_A)
+cleaned_data$interaction <- cleaned_data$AGEP_A * cleaned_data$log_AGEP_A
+
+# Fit the logistic regression model with interaction term
+box_tidwell_model <- glm(DIBEV_A ~ DENPREV_A + AGEP_A + interaction + SEX_A + RACEALLP_A + EDUCP_A, 
+                         data = cleaned_data, family = binomial())
+
+# Summary of the model - we check for the p-value for the interaction term. if p <=0.05, the linearity assumption is violated for Age variable.
+summary(box_tidwell_model)
+
+```
+Interpretation: 
+The p-value for the interaction term in the output is highly significant statistically.This indicates that the linearity assumption is violated.
+
+
+```{r}
+# LOGISTIC REGRESSION ANALYSIS 
+
+# Fit logistic regression model
+logit_model <- glm(DIBEV_A ~ DENPREV_A + AGEP_A +  
+                     SEX_A + RACEALLP_A + EDUCP_A, 
+                   data = cleaned_data, family = binomial())
+
+# Create a summary of the model
+model_summary <- summary(logit_model)
+
+# Extract Odds Ratios, Confidence Intervals, and p-values
+odds_ratios <- exp(coef(logit_model))  # Calculate Odds Ratios
+conf_int <- exp(confint(logit_model))  # Calculate Confidence Intervals
+p_values <- coef(summary(logit_model))[, "Pr(>|z|)"]  # Extract p-values
+
+# Add significance stars based on p-values
+significance <- ifelse(p_values < 0.001, "***",
+                ifelse(p_values < 0.01, "**",
+                ifelse(p_values < 0.05, "*", "")))
+
+# Combine into a tidy data frame
+results <- data.frame(
+  Variable = names(odds_ratios),          # Variable names
+  Odds_Ratio = round(odds_ratios, 3),    # Rounded odds ratios
+  CI_Lower = round(conf_int[, 1], 3),    # Lower bound of CI
+  CI_Upper = round(conf_int[, 2], 3),    # Upper bound of CI
+  P_Value = round(p_values, 3),          # P-values
+  Significance = significance            # Significance stars
+)
+
+# Print the organized results
+print(results)
+
+```
+Interpretation: 
+
+1. Dental Visits:
+The odds of diabetes in individuals who had a dental visit within the past 1 year is 1.25 times higher than the odds of diabetes in individuals who never had a dental visit (OR = 1.25, p = 0.368).
+The odds of diabetes in individuals who had a dental visit within the past 2 years is 1.03 times higher than the odds of diabetes in individuals who never had a dental visit (OR = 1.03, p = 0.900).
+Both results are not statistically significant.
+
+2. Age (AGEP_A):
+For every one-year increase in age, the odds of diabetes decrease by 4.9% (OR = 0.95, p < 0.001).
+This result is statistically significant.
+
+3. Sex (SEX_A):
+The odds of diabetes in female participants are 1.30 times higher than the odds of diabetes in 
+male participants (OR = 1.30, p < 0.001). This result is statistically significant.
+
+4. Race/Ethnicity (RACEALLP_A):
+The odds of diabetes in Black/African American participants are 50.2% lower than the odds of diabetes 
+in White participants (OR = 0.50, p < 0.001).
+The odds of diabetes in Asian participants are 37.6% lower than the odds of diabetes in White 
+participants (OR = 0.62, p < 0.001).
+The odds of diabetes in American Indian/Alaska Native (AIAN) participants are 47.3% lower than the 
+odds of diabetes in White participants (OR = 0.53, p = 0.005).
+The odds of diabetes in other race groups are not significantly different from the odds of diabetes 
+in White participants.
+
+5. Education Level (EDUCP_A):
+The odds of diabetes in participants with a college graduate degree or higher are 2.21 times higher 
+than the odds of diabetes in participants with less than a high school education (OR = 2.21, p < 0.001).
+The odds of diabetes in participants with some college or an associate degree are 1.30 times higher 
+than the odds of diabetes in participants with less than a high school education (OR = 1.30, p = 0.004).
+The odds of diabetes in participants with a high school education are 1.27 times higher than the odds 
+of diabetes in participants with less than a high school education (OR = 1.27, p = 0.013).
+All results for education level are statistically significant.
+
+Summary:
+Dental visit history does not show a statistically significant association with diabetes.
+Age, sex, race/ethnicity, and education level demonstrate statistically significant associations with the
+
+```{r}
+
+# DATA VISUALIZATION
+
+# Prepare data for DENPREV_A visualization
+dental_summary <- cleaned_data %>%
+  group_by(DENPREV_A) %>%
+  summarize(
+    Diabetes_Prevalence = mean(DIBEV_A == "Yes") * 100
+  )
+
+# Enhanced plot with custom colors
+ggplot(dental_summary, aes(x = reorder(DENPREV_A, -Diabetes_Prevalence), 
+                           y = Diabetes_Prevalence, fill = DENPREV_A)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") + # Add bar borders
+  geom_text(aes(label = round(Diabetes_Prevalence, 1)), 
+            vjust = -0.3, size = 4, color = "black") + # Add value labels
+  labs(
+    title = "Diabetes Prevalence by Dental Visit History",
+    subtitle = "Highlighting the impact of dental visits on diabetes prevalence",
+    x = "Dental Visit History",
+    y = "Prevalence (%)"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Never" = "lightblue",
+      "Within Past 1 Year" = "darkviolet", # Copper blue
+      "Within Past 2 Years" = "lightgreen"  # Carrot green
+    )
+  ) + # Use custom colors
+  theme_minimal(base_size = 14) + # Set base font size
+  theme(
+    legend.position = "none", # Remove legend
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5), # Center and bold title
+    plot.subtitle = element_text(size = 12, hjust = 0.5), # Add a subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12)
+  ) +
+  coord_flip() # Flip coordinates for horizontal bars
+```
+
+Interpretation: 
+Highest prevalence of diabetes among participants by their dental visit history within the past one year is observed at 90.8% Similarly, the prevalence for participants with dental visits in the past two years is 89% and for no visit history, the diabets prevalence is 86.4%.
+
+## R Markdown
+
+#This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+#When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+
+```
